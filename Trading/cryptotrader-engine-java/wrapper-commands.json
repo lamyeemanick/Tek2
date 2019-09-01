@@ -1,0 +1,19 @@
+{
+  "wrapper": {
+    "timebankMax": 2000,
+    "timePerMove": 100,
+    "maxTimeouts": 0,
+    "resultFile": "./resultfile.json",
+    "propagateBotExitCode": false,
+    "debug": true
+  },
+  "match": {
+    "bots": [{
+      "command": "/home/nickauteen/delivery/Tek2_2018/Trading/cryptotrader-engine-java/trade"
+    }],
+    "engine": {
+      "command": "java -jar /home/nickauteen/delivery/Tek2_2018/Trading/cryptotrader-engine-java/build/libs/cryptotrader-engine-java-1.1.0.jar",
+      "configuration": {}
+    }
+  }
+}

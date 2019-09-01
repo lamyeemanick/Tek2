@@ -1,0 +1,15 @@
+/*
+** EPITECH PROJECT, 2019
+** main
+** File description:
+** main
+*/
+
+int  main()
+{
+    string_t s;
+    string_init (&s, "Hello  World");
+    printf("%sn", s.str);
+    string_destroy (&s);
+    return  (0);
+}

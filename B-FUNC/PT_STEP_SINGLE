@@ -1,0 +1,894 @@
+PTRACE(2)                                                                       Linux Programmer's Manual                                                                       PTRACE(2)
+
+[1mNAME[0m
+       ptrace - process trace
+
+[1mSYNOPSIS[0m
+       [1m#include <sys/ptrace.h>[0m
+
+       [1mlong ptrace(enum __ptrace_request [4m[22mrequest[24m[1m, pid_t [4m[22mpid[24m[1m,[0m
+                   [1mvoid *[4m[22maddr[24m[1m, void *[4m[22mdata[24m[1m);[0m
+
+[1mDESCRIPTION[0m
+       The  [1mptrace[22m() system call provides a means by which one process (the "tracer") may observe and control the execution of another process (the "tracee"), and examine and change the
+       tracee's memory and registers.  It is primarily used to implement breakpoint debugging and system call tracing.
+
+       A tracee first needs to be attached to the tracer.  Attachment and subsequent commands are per thread: in a multithreaded process, every thread can be individually attached to  a
+       (potentially  different) tracer, or left not attached and thus not debugged.  Therefore, "tracee" always means "(one) thread", never "a (possibly multithreaded) process".  Ptrace
+       commands are always sent to a specific tracee using a call of the form
+
+           ptrace(PTRACE_foo, pid, ...)
+
+       where [4mpid[24m is the thread ID of the corresponding Linux thread.
+
+       (Note that in this page, a "multithreaded process" means a thread group consisting of threads created using the [1mclone[22m(2) [1mCLONE_THREAD [22mflag.)
+
+       A process can initiate a trace by calling [1mfork[22m(2) and having the resulting child do a [1mPTRACE_TRACEME[22m, followed (typically) by an [1mexecve[22m(2).  Alternatively, one process  may  com‐
+       mence tracing another process using [1mPTRACE_ATTACH [22mor [1mPTRACE_SEIZE[22m.
+
+       While being traced, the tracee will stop each time a signal is delivered, even if the signal is being ignored.  (An exception is [1mSIGKILL[22m, which has its usual effect.)  The tracer
+       will be notified at its next call to [1mwaitpid[22m(2) (or one of the related "wait" system calls); that call will return a [4mstatus[24m value containing information that indicates the  cause
+       of  the  stop in the tracee.  While the tracee is stopped, the tracer can use various ptrace requests to inspect and modify the tracee.  The tracer then causes the tracee to con‐
+       tinue, optionally ignoring the delivered signal (or even delivering a different signal instead).
+
+       If the [1mPTRACE_O_TRACEEXEC [22moption is not in effect, all successful calls to [1mexecve[22m(2) by the traced process will cause it to be sent a [1mSIGTRAP [22msignal, giving the parent  a  chance
+       to gain control before the new program begins execution.
+
+       When the tracer is finished tracing, it can cause the tracee to continue executing in a normal, untraced mode via [1mPTRACE_DETACH[22m.
+
+       The value of [4mrequest[24m determines the action to be performed:
+
+       [1mPTRACE_TRACEME[0m
+              Indicate  that this process is to be traced by its parent.  A process probably shouldn't make this request if its parent isn't expecting to trace it.  ([4mpid[24m, [4maddr[24m, and [4mdata[0m
+              are ignored.)
+
+              The [1mPTRACE_TRACEME [22mrequest is used only by the tracee; the remaining requests are used only by the tracer.  In the following requests, [4mpid[24m specifies the thread ID  of  the
+              tracee to be acted on.  For requests other than [1mPTRACE_ATTACH[22m, [1mPTRACE_SEIZE[22m, [1mPTRACE_INTERRUPT[22m, and [1mPTRACE_KILL[22m, the tracee must be stopped.
+
+       [1mPTRACE_PEEKTEXT[22m, [1mPTRACE_PEEKDATA[0m
+              Read  a word at the address [4maddr[24m in the tracee's memory, returning the word as the result of the [1mptrace[22m() call.  Linux does not have separate text and data address spaces,
+              so these two requests are currently equivalent.  ([4mdata[24m is ignored; but see NOTES.)
+
+       [1mPTRACE_PEEKUSER[0m
+              Read a word at offset [4maddr[24m in the tracee's USER area, which holds the registers and other information about the process (see [4m<sys/user.h>[24m).  The word is  returned  as  the
+              result of the [1mptrace[22m() call.  Typically, the offset must be word-aligned, though this might vary by architecture.  See NOTES.  ([4mdata[24m is ignored; but see NOTES.)
+
+       [1mPTRACE_POKETEXT[22m, [1mPTRACE_POKEDATA[0m
+              Copy the word [4mdata[24m to the address [4maddr[24m in the tracee's memory.  As for [1mPTRACE_PEEKTEXT [22mand [1mPTRACE_PEEKDATA[22m, these two requests are currently equivalent.
+
+       [1mPTRACE_POKEUSER[0m
+              Copy the word [4mdata[24m to offset [4maddr[24m in the tracee's USER area.  As for [1mPTRACE_PEEKUSER[22m, the offset must typically be word-aligned.  In order to maintain the integrity of the
+              kernel, some modifications to the USER area are disallowed.
+
+       [1mPTRACE_GETREGS[22m, [1mPTRACE_GETFPREGS[0m
+              Copy the tracee's general-purpose or floating-point registers, respectively, to the address [4mdata[24m in the tracer.  See [4m<sys/user.h>[24m for information on  the  format  of  this
+              data.   ([4maddr[24m  is ignored.)  Note that SPARC systems have the meaning of [4mdata[24m and [4maddr[24m reversed; that is, [4mdata[24m is ignored and the registers are copied to the address [4maddr[24m.
+              [1mPTRACE_GETREGS [22mand [1mPTRACE_GETFPREGS [22mare not present on all architectures.
+
+       [1mPTRACE_GETREGSET [22m(since Linux 2.6.34)
+              Read the tracee's registers.  [4maddr[24m specifies, in an architecture-dependent way, the type of registers to be read.  [1mNT_PRSTATUS [22m(with numerical value 1) usually results  in
+              reading  of  general-purpose  registers.   If  the CPU has, for example, floating-point and/or vector registers, they can be retrieved by setting [4maddr[24m to the corresponding
+              [1mNT_foo [22mconstant.  [4mdata[24m points to a [1mstruct iovec[22m, which describes the destination buffer's location and length.  On return, the kernel  modifies  [1miov.len  [22mto  indicate  the
+              actual number of bytes returned.
+
+       [1mPTRACE_SETREGS[22m, [1mPTRACE_SETFPREGS[0m
+              Modify  the tracee's general-purpose or floating-point registers, respectively, from the address [4mdata[24m in the tracer.  As for [1mPTRACE_POKEUSER[22m, some general-purpose register
+              modifications may be disallowed.  ([4maddr[24m is ignored.)  Note that SPARC systems have the meaning of [4mdata[24m and [4maddr[24m reversed; that is, [4mdata[24m is ignored and  the  registers  are
+              copied from the address [4maddr[24m.  [1mPTRACE_SETREGS [22mand [1mPTRACE_SETFPREGS [22mare not present on all architectures.
+
+       [1mPTRACE_SETREGSET [22m(since Linux 2.6.34)
+              Modify the tracee's registers.  The meaning of [4maddr[24m and [4mdata[24m is analogous to [1mPTRACE_GETREGSET[22m.
+
+       [1mPTRACE_GETSIGINFO [22m(since Linux 2.3.99-pre6)
+              Retrieve  information  about  the  signal that caused the stop.  Copy a [4msiginfo_t[24m structure (see [1msigaction[22m(2)) from the tracee to the address [4mdata[24m in the tracer.  ([4maddr[24m is
+              ignored.)
+
+       [1mPTRACE_SETSIGINFO [22m(since Linux 2.3.99-pre6)
+              Set signal information: copy a [4msiginfo_t[24m structure from the address [4mdata[24m in the tracer to the tracee.  This will affect only signals that would normally  be  delivered  to
+              the tracee and were caught by the tracer.  It may be difficult to tell these normal signals from synthetic signals generated by [1mptrace[22m() itself.  ([4maddr[24m is ignored.)
+
+       [1mPTRACE_PEEKSIGINFO [22m(since Linux 3.10)
+              Retrieve  [4msiginfo_t[24m  structures  without  removing signals from a queue.  [4maddr[24m points to a [4mptrace_peeksiginfo_args[24m structure that specifies the ordinal position from which
+              copying of signals should start, and the number of signals to copy.  [4msiginfo_t[24m structures are copied into the buffer pointed to by [4mdata[24m.  The  return  value  contains  the
+              number  of  copied  signals  (zero indicates that there is no signal corresponding to the specified ordinal position).  Within the returned [4msiginfo[24m structures, the [4msi_code[0m
+              field includes information ([1m__SI_CHLD[22m, [1m__SI_FAULT[22m, etc.) that are not otherwise exposed to user space.
+
+           struct ptrace_peeksiginfo_args {
+               u64 off;    /* Ordinal position in queue at which
+                              to start copying signals */
+               u32 flags;  /* PTRACE_PEEKSIGINFO_SHARED or 0 */
+               s32 nr;     /* Number of signals to copy */
+           };
+
+              Currently, there is only one flag, [1mPTRACE_PEEKSIGINFO_SHARED[22m, for dumping signals from the process-wide signal queue.  If this flag is not set, signals are read  from  the
+              per-thread queue of the specified thread.
+
+       [1mPTRACE_GETSIGMASK [22m(since Linux 3.11)
+              Place  a copy of the mask of blocked signals (see [1msigprocmask[22m(2)) in the buffer pointed to by [4mdata[24m, which should be a pointer to a buffer of type [4msigset_t[24m.  The [4maddr[24m argu‐
+              ment contains the size of the buffer pointed to by [4mdata[24m (i.e., [4msizeof(sigset_t)[24m).
+
+       [1mPTRACE_SETSIGMASK [22m(since Linux 3.11)
+              Change the mask of blocked signals (see [1msigprocmask[22m(2)) to the value specified in the buffer pointed to by [4mdata[24m, which should be a pointer to a buffer  of  type  [4msigset_t[24m.
+              The [4maddr[24m argument contains the size of the buffer pointed to by [4mdata[24m (i.e., [4msizeof(sigset_t)[24m).
+
+       [1mPTRACE_SETOPTIONS [22m(since Linux 2.4.6; see BUGS for caveats)
+              Set ptrace options from [4mdata[24m.  ([4maddr[24m is ignored.)  [4mdata[24m is interpreted as a bit mask of options, which are specified by the following flags:
+
+              [1mPTRACE_O_EXITKILL [22m(since Linux 3.8)
+                     Send  a  [1mSIGKILL  [22msignal to the tracee if the tracer exits.  This option is useful for ptrace jailers that want to ensure that tracees can never escape the tracer's
+                     control.
+
+              [1mPTRACE_O_TRACECLONE [22m(since Linux 2.5.46)
+                     Stop the tracee at the next [1mclone[22m(2) and automatically start tracing the newly cloned process, which will start with a [1mSIGSTOP[22m, or [1mPTRACE_EVENT_STOP [22mif [1mPTRACE_SEIZE[0m
+                     was used.  A [1mwaitpid[22m(2) by the tracer will return a [4mstatus[24m value such that
+
+                       status>>8 == (SIGTRAP | (PTRACE_EVENT_CLONE<<8))
+
+                     The PID of the new process can be retrieved with [1mPTRACE_GETEVENTMSG[22m.
+
+                     This  option  may  not  catch  [1mclone[22m(2) calls in all cases.  If the tracee calls [1mclone[22m(2) with the [1mCLONE_VFORK [22mflag, [1mPTRACE_EVENT_VFORK [22mwill be delivered instead if
+                     [1mPTRACE_O_TRACEVFORK [22mis set; otherwise if the tracee calls [1mclone[22m(2) with the exit signal set to [1mSIGCHLD[22m, [1mPTRACE_EVENT_FORK [22mwill be delivered if [1mPTRACE_O_TRACEFORK [22mis
+                     set.
+
+              [1mPTRACE_O_TRACEEXEC [22m(since Linux 2.5.46)
+                     Stop the tracee at the next [1mexecve[22m(2).  A [1mwaitpid[22m(2) by the tracer will return a [4mstatus[24m value such that
+
+                       status>>8 == (SIGTRAP | (PTRACE_EVENT_EXEC<<8))
+
+                     If  the execing thread is not a thread group leader, the thread ID is reset to thread group leader's ID before this stop.  Since Linux 3.0, the former thread ID can
+                     be retrieved with [1mPTRACE_GETEVENTMSG[22m.
+
+              [1mPTRACE_O_TRACEEXIT [22m(since Linux 2.5.60)
+                     Stop the tracee at exit.  A [1mwaitpid[22m(2) by the tracer will return a [4mstatus[24m value such that
+
+                       status>>8 == (SIGTRAP | (PTRACE_EVENT_EXIT<<8))
+
+                     The tracee's exit status can be retrieved with [1mPTRACE_GETEVENTMSG[22m.
+
+                     The tracee is stopped early during process exit, when registers are still available, allowing the tracer to see where the exit occurred,  whereas  the  normal  exit
+                     notification is done after the process is finished exiting.  Even though context is available, the tracer cannot prevent the exit from happening at this point.
+
+              [1mPTRACE_O_TRACEFORK [22m(since Linux 2.5.46)
+                     Stop  the tracee at the next [1mfork[22m(2) and automatically start tracing the newly forked process, which will start with a [1mSIGSTOP[22m, or [1mPTRACE_EVENT_STOP [22mif [1mPTRACE_SEIZE[0m
+                     was used.  A [1mwaitpid[22m(2) by the tracer will return a [4mstatus[24m value such that
+
+                       status>>8 == (SIGTRAP | (PTRACE_EVENT_FORK<<8))
+
+                     The PID of the new process can be retrieved with [1mPTRACE_GETEVENTMSG[22m.
+
+              [1mPTRACE_O_TRACESYSGOOD [22m(since Linux 2.4.6)
+                     When delivering system call traps, set bit 7 in the signal number (i.e., deliver [4mSIGTRAP|0x80[24m).  This makes it easy for the tracer to distinguish normal traps  from
+                     those caused by a system call.  ([1mPTRACE_O_TRACESYSGOOD [22mmay not work on all architectures.)
+
+              [1mPTRACE_O_TRACEVFORK [22m(since Linux 2.5.46)
+                     Stop  the  tracee  at  the  next  [1mvfork[22m(2)  and  automatically  start  tracing  the  newly vforked process, which will start with a [1mSIGSTOP[22m, or [1mPTRACE_EVENT_STOP [22mif
+                     [1mPTRACE_SEIZE [22mwas used.  A [1mwaitpid[22m(2) by the tracer will return a [4mstatus[24m value such that
+
+                       status>>8 == (SIGTRAP | (PTRACE_EVENT_VFORK<<8))
+
+                     The PID of the new process can be retrieved with [1mPTRACE_GETEVENTMSG[22m.
+
+              [1mPTRACE_O_TRACEVFORKDONE [22m(since Linux 2.5.60)
+                     Stop the tracee at the completion of the next [1mvfork[22m(2).  A [1mwaitpid[22m(2) by the tracer will return a [4mstatus[24m value such that
+
+                       status>>8 == (SIGTRAP | (PTRACE_EVENT_VFORK_DONE<<8))
+
+                     The PID of the new process can (since Linux 2.6.18) be retrieved with [1mPTRACE_GETEVENTMSG[22m.
+
+              [1mPTRACE_O_TRACESECCOMP [22m(since Linux 3.5)
+                     Stop the tracee when a [1mseccomp[22m(2) [1mSECCOMP_RET_TRACE [22mrule is triggered.  A [1mwaitpid[22m(2) by the tracer will return a [4mstatus[24m value such that
+
+                       status>>8 == (SIGTRAP | (PTRACE_EVENT_SECCOMP<<8))
+
+                     While this triggers a [1mPTRACE_EVENT [22mstop, it is similar to a syscall-enter-stop.  For details, see the note on [1mPTRACE_EVENT_SECCOMP [22mbelow.  The seccomp event message
+                     data (from the [1mSECCOMP_RET_DATA [22mportion of the seccomp filter rule) can be retrieved with [1mPTRACE_GETEVENTMSG[22m.
+
+              [1mPTRACE_O_SUSPEND_SECCOMP [22m(since Linux 4.3)
+                     Suspend the tracee's seccomp protections.  This applies regardless of mode, and can be used when the tracee has not yet installed seccomp filters.  That is, a valid
+                     use case is to suspend a tracee's seccomp protections before they are installed by the tracee, let the tracee install the filters, and then clear this flag when the
+                     filters should be resumed.  Setting this option requires that the tracer have the [1mCAP_SYS_ADMIN [22mcapability, not have any seccomp protections installed, and not have
+                     [1mPTRACE_O_SUSPEND_SECCOMP [22mset on itself.
+
+       [1mPTRACE_GETEVENTMSG [22m(since Linux 2.5.46)
+              Retrieve a message (as an [4munsigned[24m [4mlong[24m) about the ptrace event that just happened, placing it at the address [4mdata[24m in the  tracer.   For  [1mPTRACE_EVENT_EXIT[22m,  this  is  the
+              tracee's  exit  status.   For  [1mPTRACE_EVENT_FORK[22m,  [1mPTRACE_EVENT_VFORK[22m,  [1mPTRACE_EVENT_VFORK_DONE[22m,  and  [1mPTRACE_EVENT_CLONE[22m,  this  is  the  PID  of  the  new  process.  For
+              [1mPTRACE_EVENT_SECCOMP[22m, this is the [1mseccomp[22m(2) filter's [1mSECCOMP_RET_DATA [22massociated with the triggered rule.  ([4maddr[24m is ignored.)
+
+       [1mPTRACE_CONT[0m
+              Restart the stopped tracee process.  If [4mdata[24m is nonzero, it is interpreted as the number of a signal to be delivered to the tracee;  otherwise,  no  signal  is  delivered.
+              Thus, for example, the tracer can control whether a signal sent to the tracee is delivered or not.  ([4maddr[24m is ignored.)
+
+       [1mPTRACE_SYSCALL[22m, [1mPTRACE_SINGLESTEP[0m
+              Restart  the  stopped  tracee  as for [1mPTRACE_CONT[22m, but arrange for the tracee to be stopped at the next entry to or exit from a system call, or after execution of a single
+              instruction, respectively.  (The tracee will also, as usual, be stopped upon receipt of a signal.)  From the tracer's perspective, the tracee  will  appear  to  have  been
+              stopped  by  receipt  of  a  [1mSIGTRAP[22m.   So,  for  [1mPTRACE_SYSCALL[22m,  for  example, the idea is to inspect the arguments to the system call at the first stop, then do another
+              [1mPTRACE_SYSCALL [22mand inspect the return value of the system call at the second stop.  The [4mdata[24m argument is treated as for [1mPTRACE_CONT[22m.  ([4maddr[24m is ignored.)
+
+       [1mPTRACE_SYSEMU[22m, [1mPTRACE_SYSEMU_SINGLESTEP [22m(since Linux 2.6.14)
+              For [1mPTRACE_SYSEMU[22m, continue and stop on entry to the next system call, which will not be executed.  See the documentation on syscall-stops below.   For  [1mPTRACE_SYSEMU_SIN‐[0m
+              [1mGLESTEP[22m, do the same but also singlestep if not a system call.  This call is used by programs like User Mode Linux that want to emulate all the tracee's system calls.  The
+              [4mdata[24m argument is treated as for [1mPTRACE_CONT[22m.  The [4maddr[24m argument is ignored.  These requests are currently supported only on x86.
+
+       [1mPTRACE_LISTEN [22m(since Linux 3.4)
+              Restart the stopped tracee, but prevent it from executing.  The resulting state of the tracee is similar to a process which has been stopped by a [1mSIGSTOP [22m(or  other  stop‐
+              ping signal).  See the "group-stop" subsection for additional information.  [1mPTRACE_LISTEN [22mworks only on tracees attached by [1mPTRACE_SEIZE[22m.
+
+       [1mPTRACE_KILL[0m
+              Send the tracee a [1mSIGKILL [22mto terminate it.  ([4maddr[24m and [4mdata[24m are ignored.)
+
+              [4mThis[24m  [4moperation[24m [4mis[24m [4mdeprecated;[24m [4mdo[24m [4mnot[24m [4muse[24m [4mit![24m  Instead, send a [1mSIGKILL [22mdirectly using [1mkill[22m(2) or [1mtgkill[22m(2).  The problem with [1mPTRACE_KILL [22mis that it requires the tracee to
+              be in signal-delivery-stop, otherwise it may not work (i.e., may complete successfully but won't kill the tracee).  By contrast, sending a [1mSIGKILL  [22mdirectly  has  no  such
+              limitation.
+
+       [1mPTRACE_INTERRUPT [22m(since Linux 3.4)
+              Stop  a  tracee.   If  the tracee is running or sleeping in kernel space and [1mPTRACE_SYSCALL [22mis in effect, the system call is interrupted and syscall-exit-stop is reported.
+              (The interrupted system call is restarted when the tracee is restarted.)  If the tracee was already stopped by a signal and [1mPTRACE_LISTEN [22mwas sent to it, the tracee  stops
+              with  [1mPTRACE_EVENT_STOP  [22mand  [4mWSTOPSIG(status)[24m  returns  the  stop signal.  If any other ptrace-stop is generated at the same time (for example, if a signal is sent to the
+              tracee), this ptrace-stop happens.  If none of the above applies (for example, if the tracee is running in user space), it stops with [1mPTRACE_EVENT_STOP [22mwith  [4mWSTOPSIG(sta‐[0m
+              [4mtus)[24m == [1mSIGTRAP[22m.  [1mPTRACE_INTERRUPT [22monly works on tracees attached by [1mPTRACE_SEIZE[22m.
+
+       [1mPTRACE_ATTACH[0m
+              Attach  to  the process specified in [4mpid[24m, making it a tracee of the calling process.  The tracee is sent a [1mSIGSTOP[22m, but will not necessarily have stopped by the completion
+              of this call; use [1mwaitpid[22m(2) to wait for the tracee to stop.  See the "Attaching and detaching" subsection for additional information.  ([4maddr[24m and [4mdata[24m are ignored.)
+
+              Permission to perform a [1mPTRACE_ATTACH [22mis governed by a ptrace access mode [1mPTRACE_MODE_ATTACH_REALCREDS [22mcheck; see below.
+
+       [1mPTRACE_SEIZE [22m(since Linux 3.4)
+              Attach to the process specified in [4mpid[24m, making it a tracee of the calling process.  Unlike [1mPTRACE_ATTACH[22m, [1mPTRACE_SEIZE [22mdoes not stop the process.  Group-stops are reported
+              as  [1mPTRACE_EVENT_STOP  [22mand  [4mWSTOPSIG(status)[24m  returns  the  stop  signal.  Automatically attached children stop with [1mPTRACE_EVENT_STOP [22mand [4mWSTOPSIG(status)[24m returns [1mSIGTRAP[0m
+              instead of having [1mSIGSTOP [22msignal delivered to them.  [1mexecve[22m(2) does not deliver an extra [1mSIGTRAP[22m.  Only a [1mPTRACE_SEIZE[22md process can accept [1mPTRACE_INTERRUPT [22mand [1mPTRACE_LIS‐[0m
+              [1mTEN  [22mcommands.   The  "seized"  behavior  just  described  is  inherited  by  children  that  are automatically attached using [1mPTRACE_O_TRACEFORK[22m, [1mPTRACE_O_TRACEVFORK[22m, and
+              [1mPTRACE_O_TRACECLONE[22m.  [4maddr[24m must be zero.  [4mdata[24m contains a bit mask of ptrace options to activate immediately.
+
+              Permission to perform a [1mPTRACE_SEIZE [22mis governed by a ptrace access mode [1mPTRACE_MODE_ATTACH_REALCREDS [22mcheck; see below.
+
+       [1mPTRACE_SECCOMP_GET_FILTER [22m(since Linux 4.4)
+              This operation allows the tracer to dump the tracee's classic BPF filters.
+
+              [4maddr[24m is an integer specifying the index of the filter to be dumped.  The most recently installed filter has the index 0.  If [4maddr[24m is greater than the number  of  installed
+              filters, the operation fails with the error [1mENOENT[22m.
+
+              [4mdata[24m is either a pointer to a [4mstruct[24m [4msock_filter[24m array that is large enough to store the BPF program, or NULL if the program is not to be stored.
+
+              Upon  success,  the  return  value  is  the  number  of instructions in the BPF program.  If [4mdata[24m was NULL, then this return value can be used to correctly size the [4mstruct[0m
+              [4msock_filter[24m array passed in a subsequent call.
+
+              This operation fails with the error [1mEACCESS [22mif the caller does not have the [1mCAP_SYS_ADMIN [22mcapability or if the caller is in strict or filter seccomp mode.  If  the  filter
+              referred to by [4maddr[24m is not a classic BPF filter, the operation fails with the error [1mEMEDIUMTYPE[22m.
+
+              This operation is available if the kernel was configured with both the [1mCONFIG_SECCOMP_FILTER [22mand the [1mCONFIG_CHECKPOINT_RESTORE [22moptions.
+
+       [1mPTRACE_DETACH[0m
+              Restart the stopped tracee as for [1mPTRACE_CONT[22m, but first detach from it.  Under Linux, a tracee can be detached in this way regardless of which method was used to initiate
+              tracing.  ([4maddr[24m is ignored.)
+
+       [1mPTRACE_GET_THREAD_AREA [22m(since Linux 2.6.0)
+              This operation performs a similar task to [1mget_thread_area[22m(2).  It reads the TLS entry in the GDT whose index is given in [4maddr[24m, placing a copy of the entry into the  [4mstruct[0m
+              [4muser_desc[24m pointed to by [4mdata[24m.  (By contrast with [1mget_thread_area[22m(2), the [4mentry_number[24m of the [4mstruct[24m [4muser_desc[24m is ignored.)
+
+       [1mPTRACE_SET_THREAD_AREA [22m(since Linux 2.6.0)
+              This  operation performs a similar task to [1mset_thread_area[22m(2).  It sets the TLS entry in the GDT whose index is given in [4maddr[24m, assigning it the data supplied in the [4mstruct[0m
+              [4muser_desc[24m pointed to by [4mdata[24m.  (By contrast with [1mset_thread_area[22m(2), the [4mentry_number[24m of the [4mstruct[24m [4muser_desc[24m is ignored; in other words, this ptrace  operation  can't  be
+              used to allocate a free TLS entry.)
+
+   [1mDeath under ptrace[0m
+       When  a  (possibly  multithreaded)  process receives a killing signal (one whose disposition is set to [1mSIG_DFL [22mand whose default action is to kill the process), all threads exit.
+       Tracees report their death to their tracer(s).  Notification of this event is delivered via [1mwaitpid[22m(2).
+
+       Note that the killing signal will first cause signal-delivery-stop (on one tracee only), and only after it is injected by the tracer (or after it was dispatched to a thread which
+       isn't traced), will death from the signal happen on [4mall[24m tracees within a multithreaded process.  (The term "signal-delivery-stop" is explained below.)
+
+       [1mSIGKILL  [22mdoes  not  generate signal-delivery-stop and therefore the tracer can't suppress it.  [1mSIGKILL [22mkills even within system calls (syscall-exit-stop is not generated prior to
+       death by [1mSIGKILL[22m).  The net effect is that [1mSIGKILL [22malways kills the process (all its threads), even if some threads of the process are ptraced.
+
+       When the tracee calls [1m_exit[22m(2), it reports its death to its tracer.  Other threads are not affected.
+
+       When any thread executes [1mexit_group[22m(2), every tracee in its thread group reports its death to its tracer.
+
+       If the [1mPTRACE_O_TRACEEXIT [22moption is on, [1mPTRACE_EVENT_EXIT [22mwill happen before actual death.  This applies to exits via [1mexit[22m(2), [1mexit_group[22m(2), and signal deaths  (except  [1mSIGKILL[22m,
+       depending on the kernel version; see BUGS below), and when threads are torn down on [1mexecve[22m(2) in a multithreaded process.
+
+       The  tracer cannot assume that the ptrace-stopped tracee exists.  There are many scenarios when the tracee may die while stopped (such as [1mSIGKILL[22m).  Therefore, the tracer must be
+       prepared to handle an [1mESRCH [22merror on any ptrace operation.  Unfortunately, the same error is returned if the tracee exists but is not ptrace-stopped (for commands which require a
+       stopped  tracee),  or  if  it is not traced by the process which issued the ptrace call.  The tracer needs to keep track of the stopped/running state of the tracee, and interpret
+       [1mESRCH [22mas "tracee died unexpectedly" only if it knows that the tracee has been observed to enter ptrace-stop.  Note that there is no guarantee that [4mwaitpid(WNOHANG)[24m will  reliably
+       report  the  tracee's  death  status  if  a  ptrace operation returned [1mESRCH[22m.  [4mwaitpid(WNOHANG)[24m may return 0 instead.  In other words, the tracee may be "not yet fully dead", but
+       already refusing ptrace requests.
+
+       The tracer can't assume that the tracee [4malways[24m ends its life by reporting [4mWIFEXITED(status)[24m or [4mWIFSIGNALED(status)[24m; there are cases where this does not occur.  For example, if  a
+       thread  other than thread group leader does an [1mexecve[22m(2), it disappears; its PID will never be seen again, and any subsequent ptrace stops will be reported under the thread group
+       leader's PID.
+
+   [1mStopped states[0m
+       A tracee can be in two states: running or stopped.  For the purposes of ptrace, a tracee which is blocked in a system call (such as [1mread[22m(2), [1mpause[22m(2), etc.)  is nevertheless con‐
+       sidered  to  be  running,  even  if  the  tracee is blocked for a long time.  The state of the tracee after [1mPTRACE_LISTEN [22mis somewhat of a gray area: it is not in any ptrace-stop
+       (ptrace commands won't work on it, and it will deliver [1mwaitpid[22m(2) notifications), but it also may be considered "stopped" because it is not executing instructions (is not  sched‐
+       uled), and if it was in group-stop before [1mPTRACE_LISTEN[22m, it will not respond to signals until [1mSIGCONT [22mis received.
+
+       There are many kinds of states when the tracee is stopped, and in ptrace discussions they are often conflated.  Therefore, it is important to use precise terms.
+
+       In  this manual page, any stopped state in which the tracee is ready to accept ptrace commands from the tracer is called [4mptrace-stop[24m.  Ptrace-stops can be further subdivided into
+       [4msignal-delivery-stop[24m, [4mgroup-stop[24m, [4msyscall-stop[24m, [4mPTRACE_EVENT[24mstops, and so on.  These stopped states are described in detail below.
+
+       When the running tracee enters ptrace-stop, it notifies its tracer using [1mwaitpid[22m(2) (or one of the other "wait" system calls).  Most of this manual page assumes that  the  tracer
+       waits with:
+
+           pid = waitpid(pid_or_minus_1, &status, __WALL);
+
+       Ptrace-stopped tracees are reported as returns with [4mpid[24m greater than 0 and [4mWIFSTOPPED(status)[24m true.
+
+       The [1m__WALL [22mflag does not include the [1mWSTOPPED [22mand [1mWEXITED [22mflags, but implies their functionality.
+
+       Setting the [1mWCONTINUED [22mflag when calling [1mwaitpid[22m(2) is not recommended: the "continued" state is per-process and consuming it can confuse the real parent of the tracee.
+
+       Use of the [1mWNOHANG [22mflag may cause [1mwaitpid[22m(2) to return 0 ("no wait results available yet") even if the tracer knows there should be a notification.  Example:
+
+           errno = 0;
+           ptrace(PTRACE_CONT, pid, 0L, 0L);
+           if (errno == ESRCH) {
+               /* tracee is dead */
+               r = waitpid(tracee, &status, __WALL | WNOHANG);
+               /* r can still be 0 here! */
+           }
+
+       The  following  kinds  of  ptrace-stops exist: signal-delivery-stops, group-stops, [1mPTRACE_EVENT [22mstops, syscall-stops.  They all are reported by [1mwaitpid[22m(2) with [4mWIFSTOPPED(status)[0m
+       true.  They may be differentiated by examining the value [4mstatus>>8[24m, and if there is ambiguity in that value, by querying [1mPTRACE_GETSIGINFO[22m.   (Note:  the  [4mWSTOPSIG(status)[24m  macro
+       can't be used to perform this examination, because it returns the value [4m(status>>8)[24m [4m&[24m [4m0xff[24m.)
+
+   [1mSignal-delivery-stop[0m
+       When  a  (possibly  multithreaded)  process receives any signal except [1mSIGKILL[22m, the kernel selects an arbitrary thread which handles the signal.  (If the signal is generated with
+       [1mtgkill[22m(2), the target thread can be explicitly selected by the caller.)  If the selected thread is traced, it enters signal-delivery-stop.  At this point, the signal is  not  yet
+       delivered  to the process, and can be suppressed by the tracer.  If the tracer doesn't suppress the signal, it passes the signal to the tracee in the next ptrace restart request.
+       This second step of signal delivery is called [4msignal[24m [4minjection[24m in this manual page.  Note that if the signal is blocked, signal-delivery-stop doesn't happen until the  signal  is
+       unblocked, with the usual exception that [1mSIGSTOP [22mcan't be blocked.
+
+       Signal-delivery-stop is observed by the tracer as [1mwaitpid[22m(2) returning with [4mWIFSTOPPED(status)[24m true, with the signal returned by [4mWSTOPSIG(status)[24m.  If the signal is [1mSIGTRAP[22m, this
+       may be a different kind of ptrace-stop; see the "Syscall-stops" and "execve" sections below for details.  If [4mWSTOPSIG(status)[24m returns a stopping signal, this may be a group-stop;
+       see below.
+
+   [1mSignal injection and suppression[0m
+       After signal-delivery-stop is observed by the tracer, the tracer should restart the tracee with the call
+
+           ptrace(PTRACE_restart, pid, 0, sig)
+
+       where  [1mPTRACE_restart  [22mis  one of the restarting ptrace requests.  If [4msig[24m is 0, then a signal is not delivered.  Otherwise, the signal [4msig[24m is delivered.  This operation is called
+       [4msignal[24m [4minjection[24m in this manual page, to distinguish it from signal-delivery-stop.
+
+       The [4msig[24m value may be different from the [4mWSTOPSIG(status)[24m value: the tracer can cause a different signal to be injected.
+
+       Note that a suppressed signal still causes system calls to return prematurely.  In this case, system calls will be restarted: the tracer will observe the tracee to reexecute  the
+       interrupted  system call (or [1mrestart_syscall[22m(2) system call for a few system calls which use a different mechanism for restarting) if the tracer uses [1mPTRACE_SYSCALL[22m.  Even system
+       calls (such as [1mpoll[22m(2)) which are not restartable after signal are restarted after signal is suppressed; however, kernel bugs exist which cause some system  calls  to  fail  with
+       [1mEINTR [22meven though no observable signal is injected to the tracee.
+
+       Restarting  ptrace commands issued in ptrace-stops other than signal-delivery-stop are not guaranteed to inject a signal, even if [4msig[24m is nonzero.  No error is reported; a nonzero
+       [4msig[24m may simply be ignored.  Ptrace users should not try to "create a new signal" this way: use [1mtgkill[22m(2) instead.
+
+       The fact that signal injection requests may be ignored when restarting the tracee after ptrace stops that are not signal-delivery-stops is  a  cause  of  confusion  among  ptrace
+       users.  One typical scenario is that the tracer observes group-stop, mistakes it for signal-delivery-stop, restarts the tracee with
+
+           ptrace(PTRACE_restart, pid, 0, stopsig)
+
+       with the intention of injecting [4mstopsig[24m, but [4mstopsig[24m gets ignored and the tracee continues to run.
+
+       The [1mSIGCONT [22msignal has a side effect of waking up (all threads of) a group-stopped process.  This side effect happens before signal-delivery-stop.  The tracer can't suppress this
+       side effect (it can only suppress signal injection, which only causes the [1mSIGCONT [22mhandler to not be executed in the tracee, if such a handler is installed).  In fact,  waking  up
+       from group-stop may be followed by signal-delivery-stop for signal(s) [4mother[24m [4mthan[24m [1mSIGCONT[22m, if they were pending when [1mSIGCONT [22mwas delivered.  In other words, [1mSIGCONT [22mmay be not the
+       first signal observed by the tracee after it was sent.
+
+       Stopping signals cause (all threads of) a process to enter group-stop.  This side effect happens after signal injection, and therefore can be suppressed by the tracer.
+
+       In Linux 2.4 and earlier, the [1mSIGSTOP [22msignal can't be injected.
+
+       [1mPTRACE_GETSIGINFO [22mcan be used to retrieve a [4msiginfo_t[24m structure which corresponds to the delivered signal.  [1mPTRACE_SETSIGINFO [22mmay be used to modify it.  If [1mPTRACE_SETSIGINFO  [22mhas
+       been used to alter [4msiginfo_t[24m, the [4msi_signo[24m field and the [4msig[24m parameter in the restarting command must match, otherwise the result is undefined.
+
+   [1mGroup-stop[0m
+       When  a  (possibly  multithreaded) process receives a stopping signal, all threads stop.  If some threads are traced, they enter a group-stop.  Note that the stopping signal will
+       first cause signal-delivery-stop (on one tracee only), and only after it is injected by the tracer (or after it was dispatched to a thread which isn't traced), will group-stop be
+       initiated on [4mall[24m tracees within the multithreaded process.  As usual, every tracee reports its group-stop separately to the corresponding tracer.
+
+       Group-stop  is  observed by the tracer as [1mwaitpid[22m(2) returning with [4mWIFSTOPPED(status)[24m true, with the stopping signal available via [4mWSTOPSIG(status)[24m.  The same result is returned
+       by some other classes of ptrace-stops, therefore the recommended practice is to perform the call
+
+           ptrace(PTRACE_GETSIGINFO, pid, 0, &siginfo)
+
+       The call can be avoided if the signal is not [1mSIGSTOP[22m, [1mSIGTSTP[22m, [1mSIGTTIN[22m, or [1mSIGTTOU[22m; only these four signals are stopping signals.  If the tracer sees something else, it can't  be
+       a  group-stop.  Otherwise, the tracer needs to call [1mPTRACE_GETSIGINFO[22m.  If [1mPTRACE_GETSIGINFO [22mfails with [1mEINVAL[22m, then it is definitely a group-stop.  (Other failure codes are pos‐
+       sible, such as [1mESRCH [22m("no such process") if a [1mSIGKILL [22mkilled the tracee.)
+
+       If tracee was attached using [1mPTRACE_SEIZE[22m, group-stop is indicated by [1mPTRACE_EVENT_STOP[22m: [4mstatus>>16[24m [4m==[24m [4mPTRACE_EVENT_STOP[24m.  This allows detection of group-stops without  requiring
+       an extra [1mPTRACE_GETSIGINFO [22mcall.
+
+       As  of  Linux  2.6.38,  after  the  tracer sees the tracee ptrace-stop and until it restarts or kills it, the tracee will not run, and will not send notifications (except [1mSIGKILL[0m
+       death) to the tracer, even if the tracer enters into another [1mwaitpid[22m(2) call.
+
+       The kernel behavior described in the previous paragraph causes a problem with transparent handling of stopping signals.  If the tracer restarts the tracee after  group-stop,  the
+       stopping signal is effectively ignored—the tracee doesn't remain stopped, it runs.  If the tracer doesn't restart the tracee before entering into the next [1mwaitpid[22m(2), future [1mSIG‐[0m
+       [1mCONT [22msignals will not be reported to the tracer; this would cause the [1mSIGCONT [22msignals to have no effect on the tracee.
+
+       Since Linux 3.4, there is a method to overcome this problem: instead of [1mPTRACE_CONT[22m, a [1mPTRACE_LISTEN [22mcommand can be used to restart a tracee in a way where it does  not  execute,
+       but waits for a new event which it can report via [1mwaitpid[22m(2) (such as when it is restarted by a [1mSIGCONT[22m).
+
+   [1mPTRACE_EVENT stops[0m
+       If the tracer sets [1mPTRACE_O_TRACE_* [22moptions, the tracee will enter ptrace-stops called [1mPTRACE_EVENT [22mstops.
+
+       [1mPTRACE_EVENT  [22mstops are observed by the tracer as [1mwaitpid[22m(2) returning with [4mWIFSTOPPED(status)[24m, and [4mWSTOPSIG(status)[24m returns [1mSIGTRAP[22m.  An additional bit is set in the higher byte
+       of the status word: the value [4mstatus>>8[24m will be
+
+           (SIGTRAP | PTRACE_EVENT_foo << 8).
+
+       The following events exist:
+
+       [1mPTRACE_EVENT_VFORK[0m
+              Stop before return from [1mvfork[22m(2) or [1mclone[22m(2) with the [1mCLONE_VFORK [22mflag.  When the tracee is continued after this stop, it will wait for child to exit/exec before  continu‐
+              ing its execution (in other words, the usual behavior on [1mvfork[22m(2)).
+
+       [1mPTRACE_EVENT_FORK[0m
+              Stop before return from [1mfork[22m(2) or [1mclone[22m(2) with the exit signal set to [1mSIGCHLD[22m.
+
+       [1mPTRACE_EVENT_CLONE[0m
+              Stop before return from [1mclone[22m(2).
+
+       [1mPTRACE_EVENT_VFORK_DONE[0m
+              Stop before return from [1mvfork[22m(2) or [1mclone[22m(2) with the [1mCLONE_VFORK [22mflag, but after the child unblocked this tracee by exiting or execing.
+
+       For  all  four  stops  described  above,  the  stop  occurs in the parent (i.e., the tracee), not in the newly created thread.  [1mPTRACE_GETEVENTMSG [22mcan be used to retrieve the new
+       thread's ID.
+
+       [1mPTRACE_EVENT_EXEC[0m
+              Stop before return from [1mexecve[22m(2).  Since Linux 3.0, [1mPTRACE_GETEVENTMSG [22mreturns the former thread ID.
+
+       [1mPTRACE_EVENT_EXIT[0m
+              Stop before exit (including death from [1mexit_group[22m(2)), signal death, or exit caused by [1mexecve[22m(2) in a multithreaded process.  [1mPTRACE_GETEVENTMSG [22mreturns the  exit  status.
+              Registers can be examined (unlike when "real" exit happens).  The tracee is still alive; it needs to be [1mPTRACE_CONT[22med or [1mPTRACE_DETACH[22med to finish exiting.
+
+       [1mPTRACE_EVENT_STOP[0m
+              Stop induced by [1mPTRACE_INTERRUPT [22mcommand, or group-stop, or initial ptrace-stop when a new child is attached (only if attached using [1mPTRACE_SEIZE[22m).
+
+       [1mPTRACE_EVENT_SECCOMP[0m
+              Stop  triggered  by  a  [1mseccomp[22m(2)  rule  on  tracee  syscall  entry  when [1mPTRACE_O_TRACESECCOMP [22mhas been set by the tracer.  The seccomp event message data (from the [1mSEC‐[0m
+              [1mCOMP_RET_DATA [22mportion of the seccomp filter rule) can be retrieved with [1mPTRACE_GETEVENTMSG[22m.  The semantics of this stop are described  in  detail  in  a  separate  section
+              below.
+
+       [1mPTRACE_GETSIGINFO [22mon [1mPTRACE_EVENT [22mstops returns [1mSIGTRAP [22min [4msi_signo[24m, with [4msi_code[24m set to [4m(event<<8)[24m [4m|[24m [4mSIGTRAP[24m.
+
+   [1mSyscall-stops[0m
+       If  the  tracee  was  restarted by [1mPTRACE_SYSCALL [22mor [1mPTRACE_SYSEMU[22m, the tracee enters syscall-enter-stop just prior to entering any system call (which will not be executed if the
+       restart was using [1mPTRACE_SYSEMU[22m, regardless of any change made to registers at this point or how the tracee is restarted after this stop).  No  matter  which  method  caused  the
+       syscall-entry-stop, if the tracer restarts the tracee with [1mPTRACE_SYSCALL[22m, the tracee enters syscall-exit-stop when the system call is finished, or if it is interrupted by a sig‐
+       nal.  (That is, signal-delivery-stop never happens between syscall-enter-stop and syscall-exit-stop; it happens [4mafter[24m syscall-exit-stop.).  If the tracee is continued  using  any
+       other method (including [1mPTRACE_SYSEMU[22m), no syscall-exit-stop occurs.  Note that all mentions [1mPTRACE_SYSEMU [22mapply equally to [1mPTRACE_SYSEMU_SINGLESTEP.[0m
+
+       However, even if the tracee was continued using [1mPTRACE_SYSCALL [22m, it is not guaranteed that the next stop will be a syscall-exit-stop.  Other possibilities are that the tracee may
+       stop in a [1mPTRACE_EVENT [22mstop (including seccomp stops), exit (if it entered [1m_exit[22m(2) or [1mexit_group[22m(2)), be killed by [1mSIGKILL[22m, or die silently (if it is a thread group leader,  the
+       [1mexecve[22m(2) happened in another thread, and that thread is not traced by the same tracer; this situation is discussed later).
+
+       Syscall-enter-stop  and  syscall-exit-stop  are  observed  by  the  tracer  as  [1mwaitpid[22m(2)  returning  with  [4mWIFSTOPPED(status)[24m true, and [4mWSTOPSIG(status)[24m giving [1mSIGTRAP[22m.  If the
+       [1mPTRACE_O_TRACESYSGOOD [22moption was set by the tracer, then [4mWSTOPSIG(status)[24m will give the value [4m(SIGTRAP[24m [4m|[24m [4m0x80)[24m.
+
+       Syscall-stops can be distinguished from signal-delivery-stop with [1mSIGTRAP [22mby querying [1mPTRACE_GETSIGINFO [22mfor the following cases:
+
+       [4msi_code[24m <= 0
+              [1mSIGTRAP [22mwas delivered as a result of a user-space action, for example, a system call ([1mtgkill[22m(2), [1mkill[22m(2), [1msigqueue[22m(3), etc.), expiration of a POSIX timer, change of  state
+              on a POSIX message queue, or completion of an asynchronous I/O request.
+
+       [4msi_code[24m == SI_KERNEL (0x80)
+              [1mSIGTRAP [22mwas sent by the kernel.
+
+       [4msi_code[24m == SIGTRAP or [4msi_code[24m == (SIGTRAP|0x80)
+              This is a syscall-stop.
+
+       However, syscall-stops happen very often (twice per system call), and performing [1mPTRACE_GETSIGINFO [22mfor every syscall-stop may be somewhat expensive.
+
+       Some  architectures allow the cases to be distinguished by examining registers.  For example, on x86, [4mrax[24m == -[1mENOSYS [22min syscall-enter-stop.  Since [1mSIGTRAP [22m(like any other signal)
+       always happens [4mafter[24m syscall-exit-stop, and at this point [4mrax[24m almost never contains -[1mENOSYS[22m, the [1mSIGTRAP [22mlooks like "syscall-stop  which  is  not  syscall-enter-stop";  in  other
+       words, it looks like a "stray syscall-exit-stop" and can be detected this way.  But such detection is fragile and is best avoided.
+
+       Using  the [1mPTRACE_O_TRACESYSGOOD [22moption is the recommended method to distinguish syscall-stops from other kinds of ptrace-stops, since it is reliable and does not incur a perfor‐
+       mance penalty.
+
+       Syscall-enter-stop and syscall-exit-stop are indistinguishable from each other by the tracer.  The tracer needs to keep track of the sequence of ptrace-stops in order to not mis‐
+       interpret  syscall-enter-stop  as  syscall-exit-stop  or vice versa.  In general, a syscall-enter-stop is always followed by syscall-exit-stop, [1mPTRACE_EVENT [22mstop, or the tracee's
+       death; no other kinds of ptrace-stop can occur in between.  However, note that seccomp stops (see below) can cause syscall-exit-stops, without preceding syscall-entry-stops.   If
+       seccomp is in use, care needs to be taken not to misinterpret such stops as syscall-entry-stops.
+
+       If after syscall-enter-stop, the tracer uses a restarting command other than [1mPTRACE_SYSCALL[22m, syscall-exit-stop is not generated.
+
+       [1mPTRACE_GETSIGINFO [22mon syscall-stops returns [1mSIGTRAP [22min [4msi_signo[24m, with [4msi_code[24m set to [1mSIGTRAP [22mor [4m(SIGTRAP|0x80)[24m.
+
+   [1mPTRACE_EVENT_SECCOMP stops (Linux 3.5 to 4.7)[0m
+       The  behavior  of  [1mPTRACE_EVENT_SECCOMP  [22mstops and their interaction with other kinds of ptrace stops has changed between kernel versions.  This documents the behavior from their
+       introduction until Linux 4.7 (inclusive).  The behavior in later kernel versions is documented in the next section.
+
+       A [1mPTRACE_EVENT_SECCOMP [22mstop occurs whenever a [1mSECCOMP_RET_TRACE [22mrule is triggered.  This is independent of which methods was used to restart the system  call.   Notably,  seccomp
+       still runs even if the tracee was restarted using [1mPTRACE_SYSEMU [22mand this system call is unconditionally skipped.
+
+       Restarts  from  this  stop  will  behave as if the stop had occurred right before the system call in question.  In particular, both [1mPTRACE_SYSCALL [22mand [1mPTRACE_SYSEMU [22mwill normally
+       cause a subsequent syscall-entry-stop.  However, if after the [1mPTRACE_EVENT_SECCOMP [22mthe system call number is negative, both the syscall-entry-stop and the system call itself will
+       be skipped.  This means that if the system call number is negative after a [1mPTRACE_EVENT_SECCOMP [22mand the tracee is restarted using [1mPTRACE_SYSCALL, [22mthe next observed stop will be a
+       syscall-exit-stop, rather than the syscall-entry-stop that might have been expected.
+
+   [1mPTRACE_EVENT_SECCOMP stops (since Linux 4.8)[0m
+       Starting with Linux 4.8, the [1mPTRACE_EVENT_SECCOMP [22mstop was reordered to occur between syscall-entry-stop and  syscall-exit-stop.   Note  that  seccomp  no  longer  runs  (and  no
+       [1mPTRACE_EVENT_SECCOMP [22mwill be reported) if the system call is skipped due to [1mPTRACE_SYSEMU[22m.
+
+       Functionally,  a  [1mPTRACE_EVENT_SECCOMP  [22mstop functions comparably to a syscall-entry-stop (i.e., continuations using [1mPTRACE_SYSCALL [22mwill cause syscall-exit-stops, the system call
+       number may be changed and any other modified registers are visible to the to-be-executed system call as well).  Note that there may  be,  but  need  not  have  been  a  preceding
+       syscall-entry-stop.
+
+       After  a [1mPTRACE_EVENT_SECCOMP [22mstop, seccomp will be rerun, with a [1mSECCOMP_RET_TRACE [22mrule now functioning the same as a [1mSECCOMP_RET_ALLOW[22m.  Specifically, this means that if regis‐
+       ters are not modified during the [1mPTRACE_EVENT_SECCOMP [22mstop, the system call will then be allowed.
+
+   [1mPTRACE_SINGLESTEP stops[0m
+       [Details of these kinds of stops are yet to be documented.]
+
+   [1mInformational and restarting ptrace commands[0m
+       Most ptrace commands (all except [1mPTRACE_ATTACH[22m, [1mPTRACE_SEIZE[22m, [1mPTRACE_TRACEME[22m, [1mPTRACE_INTERRUPT[22m, and [1mPTRACE_KILL[22m) require the tracee to be in a ptrace-stop,  otherwise  they  fail
+       with [1mESRCH[22m.
+
+       When the tracee is in ptrace-stop, the tracer can read and write data to the tracee using informational commands.  These commands leave the tracee in ptrace-stopped state:
+
+           ptrace(PTRACE_PEEKTEXT/PEEKDATA/PEEKUSER, pid, addr, 0);
+           ptrace(PTRACE_POKETEXT/POKEDATA/POKEUSER, pid, addr, long_val);
+           ptrace(PTRACE_GETREGS/GETFPREGS, pid, 0, &struct);
+           ptrace(PTRACE_SETREGS/SETFPREGS, pid, 0, &struct);
+           ptrace(PTRACE_GETREGSET, pid, NT_foo, &iov);
+           ptrace(PTRACE_SETREGSET, pid, NT_foo, &iov);
+           ptrace(PTRACE_GETSIGINFO, pid, 0, &siginfo);
+           ptrace(PTRACE_SETSIGINFO, pid, 0, &siginfo);
+           ptrace(PTRACE_GETEVENTMSG, pid, 0, &long_var);
+           ptrace(PTRACE_SETOPTIONS, pid, 0, PTRACE_O_flags);
+
+       Note that some errors are not reported.  For example, setting signal information ([4msiginfo[24m) may have no effect in some ptrace-stops, yet the call may succeed (return 0 and not set
+       [4merrno[24m); querying [1mPTRACE_GETEVENTMSG [22mmay succeed and return some random value if current ptrace-stop is not documented as returning a meaningful event message.
+
+       The call
+
+           ptrace(PTRACE_SETOPTIONS, pid, 0, PTRACE_O_flags);
+
+       affects one tracee.  The tracee's current flags are replaced.  Flags are inherited by new tracees created and "auto-attached" via active [1mPTRACE_O_TRACEFORK[22m,  [1mPTRACE_O_TRACEVFORK[22m,
+       or [1mPTRACE_O_TRACECLONE [22moptions.
+
+       Another group of commands makes the ptrace-stopped tracee run.  They have the form:
+
+           ptrace(cmd, pid, 0, sig);
+
+       where  [4mcmd[24m is [1mPTRACE_CONT[22m, [1mPTRACE_LISTEN[22m, [1mPTRACE_DETACH[22m, [1mPTRACE_SYSCALL[22m, [1mPTRACE_SINGLESTEP[22m, [1mPTRACE_SYSEMU[22m, or [1mPTRACE_SYSEMU_SINGLESTEP[22m.  If the tracee is in signal-delivery-stop,
+       [4msig[24m is the signal to be injected (if it is nonzero).  Otherwise, [4msig[24m may be ignored.  (When restarting a tracee from a ptrace-stop other  than  signal-delivery-stop,  recommended
+       practice is to always pass 0 in [4msig[24m.)
+
+   [1mAttaching and detaching[0m
+       A thread can be attached to the tracer using the call
+
+           ptrace(PTRACE_ATTACH, pid, 0, 0);
+
+       or
+
+           ptrace(PTRACE_SEIZE, pid, 0, PTRACE_O_flags);
+
+       [1mPTRACE_ATTACH  [22msends  [1mSIGSTOP  [22mto  this thread.  If the tracer wants this [1mSIGSTOP [22mto have no effect, it needs to suppress it.  Note that if other signals are concurrently sent to
+       this thread during attach, the tracer may see the tracee enter signal-delivery-stop with other signal(s) first!  The usual practice is to reinject these signals until [1mSIGSTOP  [22mis
+       seen, then suppress [1mSIGSTOP [22minjection.  The design bug here is that a ptrace attach and a concurrently delivered [1mSIGSTOP [22mmay race and the concurrent [1mSIGSTOP [22mmay be lost.
+
+       Since  attaching  sends  [1mSIGSTOP [22mand the tracer usually suppresses it, this may cause a stray [1mEINTR [22mreturn from the currently executing system call in the tracee, as described in
+       the "Signal injection and suppression" section.
+
+       Since Linux 3.4, [1mPTRACE_SEIZE [22mcan be used instead of [1mPTRACE_ATTACH[22m.  [1mPTRACE_SEIZE [22mdoes not stop the attached process.  If you need to stop it after attach (or at any other  time)
+       without sending it any signals, use [1mPTRACE_INTERRUPT [22mcommand.
+
+       The request
+
+           ptrace(PTRACE_TRACEME, 0, 0, 0);
+
+       turns the calling thread into a tracee.  The thread continues to run (doesn't enter ptrace-stop).  A common practice is to follow the [1mPTRACE_TRACEME [22mwith
+
+           raise(SIGSTOP);
+
+       and allow the parent (which is our tracer now) to observe our signal-delivery-stop.
+
+       If  the  [1mPTRACE_O_TRACEFORK[22m,  [1mPTRACE_O_TRACEVFORK[22m, or [1mPTRACE_O_TRACECLONE [22moptions are in effect, then children created by, respectively, [1mvfork[22m(2) or [1mclone[22m(2) with the [1mCLONE_VFORK[0m
+       flag, [1mfork[22m(2) or [1mclone[22m(2) with the exit signal set to [1mSIGCHLD[22m, and other kinds of [1mclone[22m(2), are automatically attached to the same tracer which traced their parent.   [1mSIGSTOP  [22mis
+       delivered to the children, causing them to enter signal-delivery-stop after they exit the system call which created them.
+
+       Detaching of the tracee is performed by:
+
+           ptrace(PTRACE_DETACH, pid, 0, sig);
+
+       [1mPTRACE_DETACH  [22mis  a restarting operation; therefore it requires the tracee to be in ptrace-stop.  If the tracee is in signal-delivery-stop, a signal can be injected.  Otherwise,
+       the [4msig[24m parameter may be silently ignored.
+
+       If the tracee is running when the tracer wants to detach it, the usual solution is to send [1mSIGSTOP [22m(using [1mtgkill[22m(2), to make sure it goes to the correct  thread),  wait  for  the
+       tracee to stop in signal-delivery-stop for [1mSIGSTOP [22mand then detach it (suppressing [1mSIGSTOP [22minjection).  A design bug is that this can race with concurrent [1mSIGSTOP[22ms.  Another com‐
+       plication is that the tracee may enter other ptrace-stops and needs to be restarted and waited for again, until [1mSIGSTOP [22mis seen.  Yet another complication is to be sure that  the
+       tracee is not already ptrace-stopped, because no signal delivery happens while it is—not even [1mSIGSTOP[22m.
+
+       If  the  tracer  dies,  all tracees are automatically detached and restarted, unless they were in group-stop.  Handling of restart from group-stop is currently buggy, but the "as
+       planned" behavior is to leave tracee stopped and waiting for [1mSIGCONT[22m.  If the tracee is restarted from signal-delivery-stop, the pending signal is injected.
+
+   [1mexecve(2) under ptrace[0m
+       When one thread in a multithreaded process calls [1mexecve[22m(2), the kernel destroys all other threads in the process, and resets the thread ID of the execing  thread  to  the  thread
+       group  ID (process ID).  (Or, to put things another way, when a multithreaded process does an [1mexecve[22m(2), at completion of the call, it appears as though the [1mexecve[22m(2) occurred in
+       the thread group leader, regardless of which thread did the [1mexecve[22m(2).)  This resetting of the thread ID looks very confusing to tracers:
+
+       *  All other threads stop in [1mPTRACE_EVENT_EXIT [22mstop, if the [1mPTRACE_O_TRACEEXIT [22moption was turned on.  Then all other threads except the thread group leader  report  death  as  if
+          they exited via [1m_exit[22m(2) with exit code 0.
+
+       *  The  execing tracee changes its thread ID while it is in the [1mexecve[22m(2).  (Remember, under ptrace, the "pid" returned from [1mwaitpid[22m(2), or fed into ptrace calls, is the tracee's
+          thread ID.)  That is, the tracee's thread ID is reset to be the same as its process ID, which is the same as the thread group leader's thread ID.
+
+       *  Then a [1mPTRACE_EVENT_EXEC [22mstop happens, if the [1mPTRACE_O_TRACEEXEC [22moption was turned on.
+
+       *  If the thread group leader has reported its [1mPTRACE_EVENT_EXIT [22mstop by this time, it appears to the tracer that the dead thread leader "reappears  from  nowhere".   (Note:  the
+          thread  group  leader  does  not report death via [4mWIFEXITED(status)[24m until there is at least one other live thread.  This eliminates the possibility that the tracer will see it
+          dying and then reappearing.)  If the thread group leader was still alive, for the tracer this may look as if thread group leader returns from a different system call  than  it
+          entered,  or  even  "returned  from a system call even though it was not in any system call".  If the thread group leader was not traced (or was traced by a different tracer),
+          then during [1mexecve[22m(2) it will appear as if it has become a tracee of the tracer of the execing tracee.
+
+       All of the above effects are the artifacts of the thread ID change in the tracee.
+
+       The [1mPTRACE_O_TRACEEXEC [22moption is the recommended tool for dealing with this situation.  First, it enables [1mPTRACE_EVENT_EXEC [22mstop, which occurs before [1mexecve[22m(2) returns.  In  this
+       stop,  the  tracer  can use [1mPTRACE_GETEVENTMSG [22mto retrieve the tracee's former thread ID.  (This feature was introduced in Linux 3.0.)  Second, the [1mPTRACE_O_TRACEEXEC [22moption dis‐
+       ables legacy [1mSIGTRAP [22mgeneration on [1mexecve[22m(2).
+
+       When the tracer receives [1mPTRACE_EVENT_EXEC [22mstop notification, it is guaranteed that except this tracee and the thread group leader, no other threads from the process are alive.
+
+       On receiving the [1mPTRACE_EVENT_EXEC [22mstop notification, the tracer should clean up all its internal data structures describing the threads of this process, and retain only one data
+       structure—one which describes the single still running tracee, with
+
+           thread ID == thread group ID == process ID.
+
+       Example: two threads call [1mexecve[22m(2) at the same time:
+
+       *** we get syscall-enter-stop in thread 1: **
+       PID1 execve("/bin/foo", "foo" <unfinished ...>
+       *** we issue PTRACE_SYSCALL for thread 1 **
+       *** we get syscall-enter-stop in thread 2: **
+       PID2 execve("/bin/bar", "bar" <unfinished ...>
+       *** we issue PTRACE_SYSCALL for thread 2 **
+       *** we get PTRACE_EVENT_EXEC for PID0, we issue PTRACE_SYSCALL **
+       *** we get syscall-exit-stop for PID0: **
+       PID0 <... execve resumed> )             = 0
+
+       If the [1mPTRACE_O_TRACEEXEC [22moption is [4mnot[24m in effect for the execing tracee, and if the tracee was [1mPTRACE_ATTACH[22med rather that [1mPTRACE_SEIZE[22md, the kernel delivers an extra [1mSIGTRAP [22mto
+       the tracee after [1mexecve[22m(2) returns.  This is an ordinary signal (similar to one which can be generated by [4mkill[24m [4m-TRAP[24m), not a special kind of ptrace-stop.   Employing  [1mPTRACE_GET‐[0m
+       [1mSIGINFO [22mfor this signal returns [4msi_code[24m set to 0 ([4mSI_USER[24m).  This signal may be blocked by signal mask, and thus may be delivered (much) later.
+
+       Usually,  the  tracer (for example, [1mstrace[22m(1)) would not want to show this extra post-execve [1mSIGTRAP [22msignal to the user, and would suppress its delivery to the tracee (if [1mSIGTRAP[0m
+       is set to [1mSIG_DFL[22m, it is a killing signal).  However, determining [4mwhich[24m [1mSIGTRAP [22mto suppress is not easy.  Setting the [1mPTRACE_O_TRACEEXEC [22moption or  using  [1mPTRACE_SEIZE  [22mand  thus
+       suppressing this extra [1mSIGTRAP [22mis the recommended approach.
+
+   [1mReal parent[0m
+       The ptrace API (ab)uses the standard UNIX parent/child signaling over [1mwaitpid[22m(2).  This used to cause the real parent of the process to stop receiving several kinds of [1mwaitpid[22m(2)
+       notifications when the child process is traced by some other process.
+
+       Many of these bugs have been fixed, but as of Linux 2.6.38 several still exist; see BUGS below.
+
+       As of Linux 2.6.38, the following is believed to work correctly:
+
+       *  exit/death by signal is reported first to the tracer, then, when the tracer consumes the [1mwaitpid[22m(2) result, to the real parent (to the real parent only when the  whole  multi‐
+          threaded process exits).  If the tracer and the real parent are the same process, the report is sent only once.
+
+[1mRETURN VALUE[0m
+       On success, the [1mPTRACE_PEEK* [22mrequests return the requested data (but see NOTES), while other requests return zero.
+
+       On error, all requests return -1, and [4merrno[24m is set appropriately.  Since the value returned by a successful [1mPTRACE_PEEK* [22mrequest may be -1, the caller must clear [4merrno[24m before the
+       call, and then check it afterward to determine whether or not an error occurred.
+
+[1mERRORS[0m
+       [1mEBUSY  [22m(i386 only) There was an error with allocating or freeing a debug register.
+
+       [1mEFAULT [22mThere was an attempt to read from or write to an invalid area in the tracer's or the tracee's memory, probably because the area  wasn't  mapped  or  accessible.   Unfortu‐
+              nately, under Linux, different variations of this fault will return [1mEIO [22mor [1mEFAULT [22mmore or less arbitrarily.
+
+       [1mEINVAL [22mAn attempt was made to set an invalid option.
+
+       [1mEIO    [4m[22mrequest[24m  is invalid, or an attempt was made to read from or write to an invalid area in the tracer's or the tracee's memory, or there was a word-alignment violation, or an
+              invalid signal was specified during a restart request.
+
+       [1mEPERM  [22mThe specified process cannot be traced.  This could be because the tracer has insufficient privileges (the required capability is [1mCAP_SYS_PTRACE[22m);  unprivileged  processes
+              cannot trace processes that they cannot send signals to or those running set-user-ID/set-group-ID programs, for obvious reasons.  Alternatively, the process may already be
+              being traced, or (on kernels before 2.6.26) be [1minit[22m(1) (PID 1).
+
+       [1mESRCH  [22mThe specified process does not exist, or is not currently being traced by the caller, or is not stopped (for requests that require a stopped tracee).
+
+[1mCONFORMING TO[0m
+       SVr4, 4.3BSD.
+
+[1mNOTES[0m
+       Although arguments to [1mptrace[22m() are interpreted according to the prototype given, glibc currently declares [1mptrace[22m() as a variadic function with only the  [4mrequest[24m  argument  fixed.
+       It is recommended to always supply four arguments, even if the requested operation does not use them, setting unused/ignored arguments to [4m0L[24m or [4m(void[24m [4m*)[24m [4m0[24m.
+
+       In Linux kernels before 2.6.26, [1minit[22m(1), the process with PID 1, may not be traced.
+
+       A tracees parent continues to be the tracer even if that tracer calls [1mexecve[22m(2).
+
+       The  layout  of  the  contents  of memory and the USER area are quite operating-system- and architecture-specific.  The offset supplied, and the data returned, might not entirely
+       match with the definition of [4mstruct[24m [4muser[24m.
+
+       The size of a "word" is determined by the operating-system variant (e.g., for 32-bit Linux it is 32 bits).
+
+       This page documents the way the [1mptrace[22m() call works currently in Linux.  Its behavior differs significantly on other flavors of UNIX.  In any case, use of [1mptrace[22m() is highly spe‐
+       cific to the operating system and architecture.
+
+   [1mPtrace access mode checking[0m
+       Various parts of the kernel-user-space API (not just [1mptrace[22m() operations), require so-called "ptrace access mode" checks, whose outcome determines whether an operation is permit‐
+       ted (or, in a few cases, causes a "read" operation to return sanitized data).  These checks are performed in cases where one process can inspect sensitive information  about,  or
+       in  some  cases  modify the state of, another process.  The checks are based on factors such as the credentials and capabilities of the two processes, whether or not the "target"
+       process is dumpable, and the results of checks performed by any enabled Linux Security Module (LSM)—for example, SELinux, Yama, or Smack—and by the commoncap LSM (which is always
+       invoked).
+
+       Prior to Linux 2.6.27, all access checks were of a single type.  Since Linux 2.6.27, two access mode levels are distinguished:
+
+       [1mPTRACE_MODE_READ[0m
+              For  "read"  operations  or  other  operations  that  are  less  dangerous,  such  as:  [1mget_robust_list[22m(2);  [1mkcmp[22m(2);  reading  [4m/proc/[pid]/auxv[24m,  [4m/proc/[pid]/environ[24m,  or
+              [4m/proc/[pid]/stat[24m; or [1mreadlink[22m(2) of a [4m/proc/[pid]/ns/*[24m file.
+
+       [1mPTRACE_MODE_ATTACH[0m
+              For "write" operations, or other operations that are more dangerous, such as:  ptrace  attaching  ([1mPTRACE_ATTACH[22m)  to  another  process  or  calling  [1mprocess_vm_writev[22m(2).
+              ([1mPTRACE_MODE_ATTACH [22mwas effectively the default before Linux 2.6.27.)
+
+       Since Linux 4.5, the above access mode checks are combined (ORed) with one of the following modifiers:
+
+       [1mPTRACE_MODE_FSCREDS[0m
+              Use the caller's filesystem UID and GID (see [1mcredentials[22m(7)) or effective capabilities for LSM checks.
+
+       [1mPTRACE_MODE_REALCREDS[0m
+              Use the caller's real UID and GID or permitted capabilities for LSM checks.  This was effectively the default before Linux 4.5.
+
+       Because combining one of the credential modifiers with one of the aforementioned access modes is typical, some macros are defined in the kernel sources for the combinations:
+
+       [1mPTRACE_MODE_READ_FSCREDS[0m
+              Defined as [1mPTRACE_MODE_READ | PTRACE_MODE_FSCREDS[22m.
+
+       [1mPTRACE_MODE_READ_REALCREDS[0m
+              Defined as [1mPTRACE_MODE_READ | PTRACE_MODE_REALCREDS[22m.
+
+       [1mPTRACE_MODE_ATTACH_FSCREDS[0m
+              Defined as [1mPTRACE_MODE_ATTACH | PTRACE_MODE_FSCREDS[22m.
+
+       [1mPTRACE_MODE_ATTACH_REALCREDS[0m
+              Defined as [1mPTRACE_MODE_ATTACH | PTRACE_MODE_REALCREDS[22m.
+
+       One further modifier can be ORed with the access mode:
+
+       [1mPTRACE_MODE_NOAUDIT [22m(since Linux 3.3)
+              Don't audit this access mode check.  This modifier is employed for ptrace access mode checks (such as checks when reading [4m/proc/[pid]/stat[24m) that merely cause the output to
+              be filtered or sanitized, rather than causing an error to be returned to the caller.  In these cases, accessing the file is not a security violation and there is no reason
+              to generate a security audit record.  This modifier suppresses the generation of such an audit record for the particular access check.
+
+       Note  that  all of the [1mPTRACE_MODE_* [22mconstants described in this subsection are kernel-internal, and not visible to user space.  The constant names are mentioned here in order to
+       label the various kinds of ptrace access mode checks that are performed for various system calls and accesses to various pseudofiles (e.g., under [4m/proc[24m).  These names are used in
+       other manual pages to provide a simple shorthand for labeling the different kernel checks.
+
+       The  algorithm employed for ptrace access mode checking determines whether the calling process is allowed to perform the corresponding action on the target process.  (In the case
+       of opening [4m/proc/[pid][24m files, the "calling process" is the one opening the file, and the process with the corresponding PID is the "target process".)  The algorithm  is  as  fol‐
+       lows:
+
+       1. If the calling thread and the target thread are in the same thread group, access is always allowed.
+
+       2. If  the access mode specifies [1mPTRACE_MODE_FSCREDS[22m, then, for the check in the next step, employ the caller's filesystem UID and GID.  (As noted in [1mcredentials[22m(7), the filesys‐
+          tem UID and GID almost always have the same values as the corresponding effective IDs.)
+
+          Otherwise, the access mode specifies [1mPTRACE_MODE_REALCREDS[22m, so use the caller's real UID and GID for the checks in the next step.  (Most APIs that check the caller's  UID  and
+          GID use the effective IDs.  For historical reasons, the [1mPTRACE_MODE_REALCREDS [22mcheck uses the real IDs instead.)
+
+       3. Deny access if [4mneither[24m of the following is true:
+
+          · The real, effective, and saved-set user IDs of the target match the caller's user ID, [4mand[24m the real, effective, and saved-set group IDs of the target match the caller's group
+            ID.
+
+          · The caller has the [1mCAP_SYS_PTRACE [22mcapability in the user namespace of the target.
+
+       4. Deny access if the target process "dumpable" attribute has a value other than 1 ([1mSUID_DUMP_USER[22m; see the discussion of [1mPR_SET_DUMPABLE [22min [1mprctl[22m(2)), and the  caller  does  not
+          have the [1mCAP_SYS_PTRACE [22mcapability in the user namespace of the target process.
+
+       5. The  kernel LSM [4msecurity_ptrace_access_check[24m() interface is invoked to see if ptrace access is permitted.  The results depend on the LSM(s).  The implementation of this inter‐
+          face in the commoncap LSM performs the following steps:
+
+          a) If the access mode includes [1mPTRACE_MODE_FSCREDS[22m,  then  use  the  caller's  [4meffective[24m  capability  set  in  the  following  check;  otherwise  (the  access  mode  specifies
+             [1mPTRACE_MODE_REALCREDS[22m, so) use the caller's [4mpermitted[24m capability set.
+
+          b) Deny access if [4mneither[24m of the following is true:
+
+             · The caller and the target process are in the same user namespace, and the caller's capabilities are a proper superset of the target process's [4mpermitted[24m capabilities.
+
+             · The caller has the [1mCAP_SYS_PTRACE [22mcapability in the target process's user namespace.
+
+             Note that the commoncap LSM does not distinguish between [1mPTRACE_MODE_READ [22mand [1mPTRACE_MODE_ATTACH[22m.
+
+       6. If access has not been denied by any of the preceding steps, then access is allowed.
+
+   [1m/proc/sys/kernel/yama/ptrace_scope[0m
+       On systems with the Yama Linux Security Module (LSM) installed (i.e., the kernel was configured with [1mCONFIG_SECURITY_YAMA[22m), the [4m/proc/sys/kernel/yama/ptrace_scope[24m file (available
+       since Linux 3.4) can be used to restrict the ability to trace a process with [1mptrace[22m() (and thus also the ability to use tools such as [1mstrace[22m(1) and [1mgdb[22m(1)).   The  goal  of  such
+       restrictions  is to prevent attack escalation whereby a compromised process can ptrace-attach to other sensitive processes (e.g., a GPG agent or an SSH session) owned by the user
+       in order to gain additional credentials that may exist in memory and thus expand the scope of the attack.
+
+       More precisely, the Yama LSM limits two types of operations:
+
+       *  Any operation that performs a ptrace access mode [1mPTRACE_MODE_ATTACH [22mcheck—for example, [1mptrace[22m() [1mPTRACE_ATTACH[22m.  (See the "Ptrace access mode checking" discussion above.)
+
+       *  [1mptrace[22m() [1mPTRACE_TRACEME[22m.
+
+       A process that has the [1mCAP_SYS_PTRACE [22mcapability can update the [4m/proc/sys/kernel/yama/ptrace_scope[24m file with one of the following values:
+
+       0 ("classic ptrace permissions")
+              No additional restrictions on operations that perform [1mPTRACE_MODE_ATTACH [22mchecks (beyond those imposed by the commoncap and other LSMs).
+
+              The use of [1mPTRACE_TRACEME [22mis unchanged.
+
+       1 ("restricted ptrace") [default value]
+              When performing an operation that requires a [1mPTRACE_MODE_ATTACH [22mcheck, the calling process must either have the [1mCAP_SYS_PTRACE [22mcapability in the user namespace of the tar‐
+              get  process or it must have a predefined relationship with the target process.  By default, the predefined relationship is that the target process must be a descendant of
+              the caller.
+
+              A target process can employ the [1mprctl[22m(2) [1mPR_SET_PTRACER [22moperation to declare an additional PID that is allowed to perform [1mPTRACE_MODE_ATTACH [22moperations on the target.  See
+              the kernel source file [4mDocumentation/admin-guide/LSM/Yama.rst[24m (or [4mDocumentation/security/Yama.txt[24m before Linux 4.13) for further details.
+
+              The use of [1mPTRACE_TRACEME [22mis unchanged.
+
+       2 ("admin-only attach")
+              Only  processes  with  the  [1mCAP_SYS_PTRACE  [22mcapability  in the user namespace of the target process may perform [1mPTRACE_MODE_ATTACH [22moperations or trace children that employ
+              [1mPTRACE_TRACEME[22m.
+
+       3 ("no attach")
+              No process may perform [1mPTRACE_MODE_ATTACH [22moperations or trace children that employ [1mPTRACE_TRACEME[22m.
+
+              Once this value has been written to the file, it cannot be changed.
+
+       With respect to values 1 and 2, note that creating a new user namespace effectively removes the protection offered by Yama.  This is because a process in the parent  user  names‐
+       pace  whose  effective  UID  matches  the UID of the creator of a child namespace has all capabilities (including [1mCAP_SYS_PTRACE[22m) when performing operations within the child user
+       namespace (and further-removed descendants of that namespace).  Consequently, when a process tries to use user namespaces to sandbox itself, it inadvertently weakens the  protec‐
+       tions offered by the Yama LSM.
+
+   [1mC library/kernel differences[0m
+       At  the  system  call  level,  the [1mPTRACE_PEEKTEXT[22m, [1mPTRACE_PEEKDATA[22m, and [1mPTRACE_PEEKUSER [22mrequests have a different API: they store the result at the address specified by the [4mdata[0m
+       parameter, and the return value is the error flag.  The glibc wrapper function provides the API given in DESCRIPTION above, with the result being returned via the function return
+       value.
+
+[1mBUGS[0m
+       On  hosts with 2.6 kernel headers, [1mPTRACE_SETOPTIONS [22mis declared with a different value than the one for 2.4.  This leads to applications compiled with 2.6 kernel headers failing
+       when run on 2.4 kernels.  This can be worked around by redefining [1mPTRACE_SETOPTIONS [22mto [1mPTRACE_OLDSETOPTIONS[22m, if that is defined.
+
+       Group-stop notifications are sent to the tracer, but not to real parent.  Last confirmed on 2.6.38.6.
+
+       If a thread group leader is traced and exits by calling [1m_exit[22m(2), a [1mPTRACE_EVENT_EXIT [22mstop will happen for it (if requested), but the subsequent [1mWIFEXITED [22mnotification  will  not
+       be  delivered  until  all  other  threads exit.  As explained above, if one of other threads calls [1mexecve[22m(2), the death of the thread group leader will [4mnever[24m be reported.  If the
+       execed thread is not traced by this tracer, the tracer will never know that [1mexecve[22m(2) happened.  One possible workaround is to [1mPTRACE_DETACH [22mthe thread group  leader  instead  of
+       restarting it in this case.  Last confirmed on 2.6.38.6.
+
+       A  [1mSIGKILL  [22msignal may still cause a [1mPTRACE_EVENT_EXIT [22mstop before actual signal death.  This may be changed in the future; [1mSIGKILL [22mis meant to always immediately kill tasks even
+       under ptrace.  Last confirmed on Linux 3.13.
+
+       Some system calls return with [1mEINTR [22mif a signal was sent to a tracee, but delivery was suppressed by the tracer.  (This is very typical operation: it is usually done by debuggers
+       on  every  attach,  in  order  to not introduce a bogus [1mSIGSTOP[22m).  As of Linux 3.2.9, the following system calls are affected (this list is likely incomplete): [1mepoll_wait[22m(2), and
+       [1mread[22m(2) from an [1minotify[22m(7) file descriptor.  The usual symptom of this bug is that when you attach to a quiescent process with the command
+
+           strace -p <process-ID>
+
+       then, instead of the usual and expected one-line output such as
+
+           restart_syscall(<... resuming interrupted call ...>_
+
+       or
+
+           select(6, [5], NULL, [5], NULL_
+
+       ('_' denotes the cursor position), you observe more than one line.  For example:
+
+               clock_gettime(CLOCK_MONOTONIC, {15370, 690928118}) = 0
+               epoll_wait(4,_
+
+       What is not visible here is that the process was blocked in [1mepoll_wait[22m(2) before [1mstrace[22m(1) has attached to it.  Attaching caused [1mepoll_wait[22m(2) to return to user  space  with  the
+       error  [1mEINTR[22m.   In  this  particular  case, the program reacted to [1mEINTR [22mby checking the current time, and then executing [1mepoll_wait[22m(2) again.  (Programs which do not expect such
+       "stray" [1mEINTR [22merrors may behave in an unintended way upon an [1mstrace[22m(1) attach.)
+
+[1mSEE ALSO[0m
+       [1mgdb[22m(1), [1mltrace[22m(1), [1mstrace[22m(1), [1mclone[22m(2), [1mexecve[22m(2), [1mfork[22m(2), [1mgettid[22m(2), [1mprctl[22m(2), [1mseccomp[22m(2), [1msigaction[22m(2), [1mtgkill[22m(2), [1mvfork[22m(2), [1mwaitpid[22m(2), [1mexec[22m(3), [1mcapabilities[22m(7), [1msignal[22m(7)
+
+[1mCOLOPHON[0m
+       This page is part of release 4.15 of the Linux [4mman-pages[24m project.  A description of the project, information about reporting bugs, and the latest version of  this  page,  can  be
+       found at https://www.kernel.org/doc/man-pages/.
+
+Linux                                                                                   2017-09-15                                                                              PTRACE(2)
